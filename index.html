@@ -386,7 +386,19 @@ async function syncTransactionOnline(txData) {
         }
       })
     });
+      const json = await res.json();
 
+console.log(json);
+
+// โหลดข้อมูลใหม่จาก Google Sheet
+await loadFromCloud();
+
+// refresh dashboard
+renderDashboard();
+
+renderHistory();
+
+renderPalletGrid();
     // GAS อาจ redirect — ตรวจสอบ status
     if (!res.ok) throw new Error('HTTP ' + res.status);
 
