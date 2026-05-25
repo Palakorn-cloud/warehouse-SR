@@ -1,84 +1,50 @@
-<!DOCTYPE html>
-<html lang="th">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>คลังปูนขาว — Pallet Manager v3</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700;800&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-<style>
-/* ... โค้ด CSS เดิมของคุณทั้งหมด ... */
-:root { --bg:#0f0e0c; --bg2:#1a1814; --bg3:#242118; --surface:#1e1c18; --surface2:#28261f; --surface3:#33302a; --border:#3a3830; --border2:#4a4840; --text:#f0ead8; --text2:#a09880; --text3:#6a6458; --accent:#e8a44a; --accent2:#c17f3a; --accent-dim:rgba(232,164,74,0.12); --accent-glow:rgba(232,164,74,0.25); --red:#e05c4a; --red-dim:rgba(224,92,74,0.12); --green:#4db87a; --green-dim:rgba(77,184,122,0.12); --orange:#e8894a; --orange-dim:rgba(232,137,74,0.12); --radius:14px; --radius-sm:8px; --font:'Sarabun',sans-serif; --mono:'IBM Plex Mono',monospace; --nav-h:56px; }
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:100vh;font-size:15px;line-height:1.5}
-/* ... (ส่วน CSS ที่เหลือเหมือนเดิม) ... */
-</style>
-</head>
-<body>
-<nav>...</nav>
-<div id="page-dashboard" class="page active">...</div>
-<div id="page-scan" class="page">...</div>
-<div id="page-history" class="page">...</div>
-<div id="page-qrcodes" class="page">...</div>
-<div id="page-settings" class="page">...</div>
+// ════════ ส่วนที่เหลือของระบบ (ห้ามลบ) ════════
 
-<script>
-// ════════ CONSTANTS (คงเดิม) ════════
-const MAX_BAGS = 50;
-const LOW_THRESHOLD = 10;
-const PALLET_IDS = ['PAL-001','PAL-002','PAL-003','PAL-004','PAL-005','PAL-006','PAL-007','PAL-008'];
-const STORAGE_KEY = 'lw_db_v2';
-const GAS_URL_KEY = 'lw_gas_url';
-
-// ════════ แก้ไข: renderQR (Hard-coded URL สำหรับ GitHub Pages) ════════
-function renderQR() {
-  const grid = document.getElementById('qr-grid');
-  grid.innerHTML = '';
-  PALLET_IDS.forEach(id => {
-    const div = document.createElement('div');
-    div.className = 'qr-card';
-    const qty = DB.pallets[id].qty;
-    const qrId = 'qr' + id.replace(/-/g,'');
-    div.innerHTML = '<h3>' + id + '</h3><div class="qr-sub">' + qty + ' ถุงปัจจุบัน</div><div class="qr-box" id="' + qrId + '"></div><button class="print-btn" onclick="printQR(\'' + id + '\',\'' + qrId + '\')">🖨️ พิมพ์</button>';
-    grid.appendChild(div);
-    
-    // แก้ไข: ใช้ URL เต็มของ GitHub Pages เพื่อให้สแกนแล้วเจอเว็บทันที
-    const qrUrl = "https://palakorn-cloud.github.io/warehouse-SR/index.html#pallet=" + id;
-    
-    new QRCode(document.getElementById(qrId), {
-      text: qrUrl, width: 140, height: 140,
-      colorDark: '#f0ead8', colorLight: '#1e1c18',
-      correctLevel: QRCode.CorrectLevel.M
-    });
-  });
-}
-
-// ════════ แก้ไข: syncTransactionOnline (เพิ่ม mode: 'no-cors' เพื่อลดปัญหาการเชื่อมต่อ) ════════
-async function syncTransactionOnline(txData) {
-  if (!GAS_URL) return false;
-  updateSyncBadge('syncing');
-  try {
-    const res = await fetch(GAS_URL, {
-      method: 'POST',
-      mode: 'no-cors', // บรรทัดนี้ช่วยลดปัญหาการบล็อกจาก Browser
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action: 'addTransaction', data: txData })
-    });
-    updateSyncBadge('ok');
-    return true;
-  } catch (err) {
-    updateSyncBadge('err');
-    const q = getRetryQueue();
-    if (!q.find(t => t.id === txData.id)) { q.push(txData); saveRetryQueue(q); }
-    return false;
+async function retryPendingSync() {
+  if (!GAS_URL) return;
+  const q = getRetryQueue();
+  if (q.length === 0) return;
+  showToast('🔄 กำลัง retry ' + q.length + ' รายการ...', 'info');
+  const failed = [];
+  for (const txData of q) {
+    const ok = await syncTransactionOnline(txData);
+    if (!ok) failed.push(txData);
   }
+  saveRetryQueue(failed);
+  if (failed.length === 0) showToast('✅ Synced ครบถ้วน', 'success');
 }
 
-// ... [โค้ดส่วนที่เหลืออื่นๆ ทั้งหมด ให้ใส่ตามเดิมของคุณครับ] ...
-// (เช่นฟังก์ชัน saveGasUrl, testGasConnection, initDB, renderDashboard ฯลฯ)
+async function fetchStockFromSheets() {
+  if (!GAS_URL) return null;
+  try {
+    const res = await fetch(GAS_URL + '?action=getStock', { cache: 'no-store' });
+    const json = await res.json();
+    if (json.status === 'ok' && json.data) {
+      json.data.forEach(row => {
+        if (DB.pallets[row.palletId]) {
+          DB.pallets[row.palletId].qty = Number(row.qty);
+        }
+      });
+      saveDB(DB);
+      return true;
+    }
+    return false;
+  } catch (e) { return false; }
+}
 
+function initDB() {
+  const pallets = {};
+  PALLET_IDS.forEach(id => pallets[id] = { id, qty: 0, max: MAX_BAGS, updatedAt: new Date().toISOString() });
+  return { pallets, transactions: [] };
+}
+
+function loadDB() {
+  try { const raw = localStorage.getItem(STORAGE_KEY); return raw ? JSON.parse(raw) : initDB(); } 
+  catch { return initDB(); }
+}
+
+function saveDB(db) { localStorage.setItem(STORAGE_KEY, JSON.stringify(db)); }
+
+let DB = loadDB();
+// (คุณสามารถนำฟังก์ชันอื่นๆ เช่น renderDashboard, saveGasUrl, showPage ตามไฟล์เดิมของคุณมาวางต่อได้เลยครับ)
 </script>
-</body>
-</html>
