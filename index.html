@@ -1,9 +1,10 @@
+cat > /home/claude/warehouse_v4.html << 'HTMLEOF'
 <!DOCTYPE html>
 <html lang="th">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>คลังปูนขาว — Pallet Manager v3</title>
+<title>คลังปูนขาว — Pallet Manager v4</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700;800&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
@@ -146,7 +147,7 @@ tr:hover td{background:var(--surface2)}
 
 <nav>
   <div class="nav-brand">
-    📦 คลังปูนขาว <span class="nav-brand-sub">v3.0</span>
+    📦 คลังปูนขาว <span class="nav-brand-sub">v4.0</span>
   </div>
   <span class="sync-badge" id="sync-badge">localStorage</span>
   <div class="nav-tabs">
@@ -317,18 +318,16 @@ const STORAGE_KEY   = 'lw_db_v2';
 const GAS_URL_KEY   = 'lw_gas_url';
 
 // ════════ GAS CONFIG ════════
-let GAS_URL = "https://script.google.com/macros/s/AKfycby_j1c-1NSal2x3JXZDN7h5KlzTIqW93IeZPNXk3puHtCvK01AEHu7d1-aWne8QTiRrfA/exec";
-console.log("GAS_URL =", GAS_URL);
+// ✅ ดึง URL จาก localStorage ก่อน (user อาจเปลี่ยน URL ใหม่) หรือใช้ default
+let GAS_URL = localStorage.getItem(GAS_URL_KEY) ||
+  'https://script.google.com/macros/s/AKfycby_j1c-1NSal2x3JXZDN7h5KlzTIqW93IeZPNXk3puHtCvK01AEHu7d1-aWne8QTiRrfA/exec';
+
 function saveGasUrl() {
   const val = document.getElementById('gas-url-input').value.trim();
   GAS_URL = val;
   localStorage.setItem(GAS_URL_KEY, val);
   updateSyncBadge(val ? 'ok' : 'local');
-  showToast(
-    val 
-    ? 'บันทึก URL เรียบร้อย' 
-    : 'ล้าง URL แล้ว — ใช้ localStorage', 
-    val ? 'success' : 'info');
+  showToast(val ? '✅ บันทึก URL เรียบร้อย' : 'ล้าง URL แล้ว — ใช้ localStorage', val ? 'success' : 'info');
 }
 
 async function testGasConnection() {
@@ -337,11 +336,15 @@ async function testGasConnection() {
   if (!url) { el.innerHTML = '<span style="color:var(--red)">กรุณากรอก URL ก่อน</span>'; return; }
   el.innerHTML = '<span style="color:var(--accent)">⏳ กำลังทดสอบ...</span>';
   try {
-    const res  = await fetch(url + '?action=ping');
-    const json = await res.json();
+    const res  = await fetch(url + '?action=ping', { method: 'GET', cache: 'no-store', redirect: 'follow' });
+    const text = await res.text();
+    let json = {};
+    try { json = JSON.parse(text); } catch(e) {}
     el.innerHTML = '<span style="color:var(--green)">✅ เชื่อมต่อสำเร็จ — ' + JSON.stringify(json) + '</span>';
+    updateSyncBadge('ok');
   } catch(e) {
     el.innerHTML = '<span style="color:var(--red)">❌ เชื่อมต่อไม่ได้: ' + e.message + '</span>';
+    updateSyncBadge('err');
   }
 }
 
@@ -354,26 +357,28 @@ function updateSyncBadge(state) {
   else { b.textContent = 'localStorage'; }
 }
 
-// ════════ SYNC — v3: full error handling + toast + retry queue ════════
+// ════════ RETRY QUEUE ════════
 const RETRY_KEY = 'lw_retry_queue';
-
 function getRetryQueue() {
   try { return JSON.parse(localStorage.getItem(RETRY_KEY) || '[]'); } catch { return []; }
 }
 function saveRetryQueue(q) {
-  try { localStorage.setItem(RETRY_KEY, JSON.stringify(q)); } catch {}
+  try { localStorage.setItem(RETRY_KEY, JSON.stringify(q)); } catch(e) {} 
 }
 
-// ฟังก์ชันหลัก — ส่ง 1 transaction ไป GAS พร้อม error handling สมบูรณ์
+// ════════ SYNC TO GAS — v4: text() แทน json() แก้ปัญหา mobile redirect ════════
+// ✅ จุดแก้หลัก: ใช้ response.text() แล้ว parse เอง
+//    เพราะ GAS บนมือถือมักทำ redirect → res.json() พังทันที
+//    แต่ข้อมูลจริงๆ บันทึกไปแล้ว ทำให้ sync fail เท็จ
 async function syncTransactionOnline(txData) {
   if (!GAS_URL) return false;
   updateSyncBadge('syncing');
   try {
     const res = await fetch(GAS_URL, {
-      method:  'POST',
-      // Apps Script ต้องการ text/plain เพื่อหลีกเลี่ยง CORS preflight
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body:    JSON.stringify({
+      method:   'POST',
+      redirect: 'follow',                        // ✅ follow redirect อัตโนมัติ (สำคัญสำหรับมือถือ)
+      headers:  { 'Content-Type': 'text/plain;charset=utf-8' }, // ✅ text/plain ป้องกัน CORS preflight
+      body: JSON.stringify({
         action: 'addTransaction',
         data: {
           id:        txData.id,
@@ -386,55 +391,54 @@ async function syncTransactionOnline(txData) {
         }
       })
     });
-      
-    // GAS อาจ redirect — ตรวจสอบ status
+
     if (!res.ok) throw new Error('HTTP ' + res.status);
 
-    const json = await res.json();
+    // ✅ ใช้ .text() แทน .json() — parse เองเพื่อรองรับ response ที่มี whitespace/BOM จาก GAS
+    const rawText = await res.text();
+    let json = {};
+    try {
+      json = JSON.parse(rawText.trim());
+    } catch(parseErr) {
+      // GAS อาจ return HTML error page — log แล้ว throw
+      console.warn('[syncTransactionOnline] parse failed, raw:', rawText.substring(0, 200));
+      throw new Error('JSON parse failed: ' + parseErr.message);
+    }
 
-if (json.status !== 'ok') {
-  throw new Error(
-    json.message || 'GAS returned error'
-  );
-}
+    if (json.status !== 'ok') {
+      throw new Error(json.message || 'GAS returned error');
+    }
 
-// โหลดข้อมูลใหม่จาก Cloud
-await loadFromCloud();
+    // ✅ Sync สำเร็จ — โหลดข้อมูลใหม่จาก Cloud แล้ว refresh UI ทุกหน้า
+    await loadFromCloud();
+    renderDashboard();
+    renderHistory();
+    renderPalletGrid();
+    updateSyncBadge('ok');
+    return true;
 
-// refresh หน้าจอ
-renderDashboard();
-
-renderHistory();
-
-renderPalletGrid();
-
-updateSyncBadge('ok');
-
-return true;
-
-  } catch (err) {
+  } catch(err) {
+    console.error('[syncTransactionOnline] failed:', err.message);
     updateSyncBadge('err');
-    console.warn('[syncTransactionOnline] ล้มเหลว:', err.message);
 
-    // เพิ่มลงคิว retry
+    // เพิ่มลง retry queue ถ้ายังไม่มี
     const q = getRetryQueue();
     if (!q.find(t => t.id === txData.id)) {
       q.push(txData);
       saveRetryQueue(q);
     }
 
-    // แจ้ง user ผ่าน toast (ไม่ crash ระบบ)
-    showToast('⚠️ Sync ล้มเหลว — บันทึกไว้ใน localStorage แล้ว (จะ retry เมื่อมีเน็ต)', 'error');
+    showToast('⚠️ Sync ล้มเหลว — บันทึก localStorage แล้ว (retry อัตโนมัติ)', 'error');
     return false;
   }
 }
 
-// Alias เดิมสำหรับ backward-compat
+// backward-compat alias
 async function syncTransaction(txData) {
   return syncTransactionOnline(txData);
 }
 
-// Retry คิวที่ค้างอยู่ — เรียกตอน init และเมื่อ refresh dashboard
+// ════════ RETRY PENDING QUEUE ════════
 async function retryPendingSync() {
   if (!GAS_URL) return;
   const q = getRetryQueue();
@@ -444,28 +448,42 @@ async function retryPendingSync() {
   const failed = [];
   for (const txData of q) {
     const ok = await syncTransactionOnline(txData);
-    if (!ok) failed.push(txData);
-    else {
-      // อัปเดต synced flag ใน DB
+    if (!ok) {
+      failed.push(txData);
+    } else {
       const tx = DB.transactions.find(t => t.id === txData.id);
-      if (tx) { tx.synced = true; }
+      if (tx) tx.synced = true;
     }
   }
   saveRetryQueue(failed);
-  if (failed.length === 0) {
-    saveDB(DB);
+  saveDB(DB);
+  if (failed.length === 0 && q.length > 0) {
     showToast('✅ Retry สำเร็จ — Synced ทุกรายการ', 'success');
-  } else {
+  } else if (failed.length > 0) {
     showToast('⚠️ ยังมี ' + failed.length + ' รายการที่ sync ไม่ได้', 'error');
   }
 }
 
-async function fetchStockFromSheets() {
-  if (!GAS_URL) return null;
+// ════════ LOAD FROM CLOUD — ดึง STOCK จาก Sheets แล้วอัปเดต DB ════════
+// ✅ ฟังก์ชันนี้เป็น single source of truth สำหรับ sync ข้อมูลขาลง
+async function loadFromCloud() {
+  if (!GAS_URL) return false;
   try {
-    const res = await fetch(GAS_URL + '?action=getStock', { cache: 'no-store' });
+    const res = await fetch(GAS_URL + '?action=getStock', {
+      method:  'GET',
+      cache:   'no-store',    // ✅ ป้องกัน browser cache บนมือถือ
+      redirect:'follow'
+    });
     if (!res.ok) throw new Error('HTTP ' + res.status);
-    const json = await res.json();
+
+    const rawText = await res.text();
+    let json = {};
+    try {
+      json = JSON.parse(rawText.trim());
+    } catch(e) {
+      throw new Error('JSON parse failed');
+    }
+
     if (json.status === 'ok' && Array.isArray(json.data) && json.data.length > 0) {
       json.data.forEach(row => {
         if (DB.pallets[row.palletId] !== undefined) {
@@ -476,11 +494,16 @@ async function fetchStockFromSheets() {
       saveDB(DB);
       return true;
     }
-    return null; // Sheets ว่างเปล่า — ไม่ถือว่า error
-  } catch (e) {
-    console.warn('[fetchStockFromSheets]', e.message);
+    return null; // Sheets ว่าง — ไม่ใช่ error
+  } catch(e) {
+    console.warn('[loadFromCloud]', e.message);
     return null;
   }
+}
+
+// fetchStockFromSheets = alias ของ loadFromCloud (backward-compat)
+async function fetchStockFromSheets() {
+  return loadFromCloud();
 }
 
 // ════════ DATABASE ════════
@@ -547,16 +570,16 @@ function renderDashboard() {
 }
 
 async function refreshDashboard() {
-  showToast('⟳ กำลังดึงข้อมูล…', 'info');
-
-  // retry รายการที่ sync ค้างไว้พร้อมกัน (parallel)
+  showToast('⟳ กำลังดึงข้อมูลจาก Cloud…', 'info');
   const [sheetsOk] = await Promise.all([
-    fetchStockFromSheets(),
+    loadFromCloud(),
     retryPendingSync()
   ]);
-
   renderDashboard();
-  showToast(sheetsOk ? '✅ อัปเดตจาก Google Sheets แล้ว' : '📦 ใช้ข้อมูล localStorage (ตรวจสอบ URL หรือเน็ต)', sheetsOk ? 'success' : 'info');
+  showToast(
+    sheetsOk ? '✅ อัปเดตจาก Google Sheets แล้ว' : '📦 ใช้ข้อมูล localStorage (ตรวจสอบ URL หรือเน็ต)',
+    sheetsOk ? 'success' : 'info'
+  );
 }
 
 function renderAlerts() {
@@ -639,7 +662,7 @@ function renderCharts() {
   chartHist = new Chart(document.getElementById('histChart'), {
     type: 'bar',
     data: {
-      labels:   days,
+      labels: days,
       datasets: [
         { label:'รับเข้า', data:inD,  backgroundColor:'#4db87a', borderRadius:4 },
         { label:'เบิกออก', data:outD, backgroundColor:'#e05c4a', borderRadius:4 }
@@ -689,6 +712,7 @@ function addPending(qty, type) {
   document.getElementById('commit-out').style.display = type === 'OUT' ? 'block' : 'none';
 }
 
+// ════════ COMMIT TRANSACTION — v4 ════════
 async function commitTransaction(type) {
   if (!selectedPallet || pendingQty === 0) return;
   const emp = document.getElementById('emp-select').value;
@@ -704,36 +728,35 @@ async function commitTransaction(type) {
     palletId:  selectedPallet,
     type,
     qty:       pendingQty,
-    newQty,
+    newQty:    newQty,
     balance:   newQty,
     employee:  emp,
     timestamp: new Date().toISOString(),
     synced:    false
   };
 
-  // ── ขั้นตอน 1: บันทึก localStorage ก่อนเสมอ (Offline-first) ──
+  // ── Step 1: localStorage ก่อนเสมอ (Offline-first) ──
   pallet.qty = newQty;
   pallet.updatedAt = txData.timestamp;
   DB.transactions.unshift(txData);
   saveDB(DB);
 
-  // แจ้ง user และปิด panel ทันที — ไม่รอ sync
+  // แจ้ง user และปิด panel ทันที (ไม่รอ network)
   showToast((type === 'IN' ? '✅ รับเข้า ' : '📤 เบิกออก ') + pendingQty + ' ถุง — ' + selectedPallet, 'success');
   closePanel();
   renderPalletGrid();
 
-  // ── ขั้นตอน 2: Sync ไป Google Sheets แบบ non-blocking ──
+  // ── Step 2: Sync → loadFromCloud → refresh UI ──
+  // ✅ syncTransactionOnline จะเรียก loadFromCloud() + renderDashboard/History/PalletGrid ภายในตัวเอง
   try {
     const ok = await syncTransactionOnline(txData);
     if (ok) {
       txData.synced = true;
-      saveDB(DB); // อัปเดต synced flag
+      saveDB(DB);
     }
-    // ถ้าไม่ ok — syncTransactionOnline จัดการ toast + retry queue แล้ว
-  } catch (unexpectedErr) {
-    // Safety net: จับ error ที่ไม่คาดคิด ไม่ให้ crash UI
-    console.error('[commitTransaction] unexpected error:', unexpectedErr);
-    showToast('❌ เกิดข้อผิดพลาดไม่คาดคิด — ข้อมูลบันทึกใน localStorage แล้ว', 'error');
+  } catch(unexpectedErr) {
+    console.error('[commitTransaction] unexpected:', unexpectedErr);
+    showToast('❌ เกิดข้อผิดพลาด — ข้อมูลบันทึกใน localStorage แล้ว', 'error');
   }
 }
 
@@ -770,7 +793,7 @@ function renderHistory() {
   document.getElementById('history-table').innerHTML = rows;
 }
 
-// ════════ QR CODES — ✅ แก้ไขใหม่ใช้ hash fragment ════════
+// ════════ QR CODES — hash fragment ════════
 function renderQR() {
   const grid = document.getElementById('qr-grid');
   grid.innerHTML = '';
@@ -781,7 +804,6 @@ function renderQR() {
     const qrId  = 'qr' + id.replace(/-/g,'');
     div.innerHTML = '<h3>' + id + '</h3><div class="qr-sub">' + qty + ' ถุงปัจจุบัน</div><div class="qr-box" id="' + qrId + '"></div><button class="print-btn" onclick="printQR(\'' + id + '\',\'' + qrId + '\')">🖨️ พิมพ์</button>';
     grid.appendChild(div);
-    // ✅ ใช้ hash fragment แทน query string — ป้องกัน URL ถูก strip บนมือถือ
     const qrUrl = location.origin + location.pathname + '#pallet=' + id;
     new QRCode(document.getElementById(qrId), {
       text: qrUrl, width: 140, height: 140,
@@ -801,10 +823,10 @@ function printQR(id, qrId) {
   w.document.close();
 }
 
-// ════════ SETTINGS ════════
-const GAS_CODE_TEXT = `// Google Apps Script — Code.gs
-// วิธี Deploy: Extensions > Apps Script > วางโค้ด > Deploy > New Deployment
-//              Type: Web App | Execute as: Me | Access: Anyone
+// ════════ SETTINGS / GAS CODE TEXT ════════
+const GAS_CODE_TEXT = `// Google Apps Script — Code.gs (v4)
+// Deploy: Extensions > Apps Script > Deploy > New Deployment
+//         Type: Web App | Execute as: Me | Access: Anyone
 
 const SHEET_TX  = 'Transactions';
 const SHEET_PAL = 'Pallets';
@@ -819,32 +841,34 @@ function doPost(e) {
       writeTransaction(ss, body.data);
       updatePalletStock(ss, body.data.palletId, body.data.newQty);
     }
-    return json({ status: 'ok' });
+    return jsonResponse({ status: 'ok' });
   } catch(err) {
-    return json({ status: 'error', message: err.message });
-  } finally { lock.releaseLock(); }
+    return jsonResponse({ status: 'error', message: err.message });
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function doGet(e) {
   const ss     = SpreadsheetApp.getActiveSpreadsheet();
   const action = e.parameter.action;
   if (action === 'ping')
-    return json({ status: 'ok', time: new Date().toISOString() });
+    return jsonResponse({ status: 'ok', time: new Date().toISOString() });
   if (action === 'getStock') {
     const sh = ss.getSheetByName(SHEET_PAL);
-    if (!sh) return json({ status: 'ok', data: [] });
+    if (!sh) return jsonResponse({ status: 'ok', data: [] });
     const rows = sh.getDataRange().getValues();
     const hdrs = rows[0];
-    return json({ status: 'ok', data: rows.slice(1).map(r => Object.fromEntries(hdrs.map((h,i) => [h, r[i]]))) });
+    return jsonResponse({ status: 'ok', data: rows.slice(1).map(r => Object.fromEntries(hdrs.map((h,i) => [h, r[i]]))) });
   }
   if (action === 'getHistory') {
     const sh = ss.getSheetByName(SHEET_TX);
-    if (!sh) return json({ status: 'ok', data: [] });
+    if (!sh) return jsonResponse({ status: 'ok', data: [] });
     const rows = sh.getDataRange().getValues();
     const hdrs = rows[0];
-    return json({ status: 'ok', data: rows.slice(1).reverse().slice(0,200).map(r => Object.fromEntries(hdrs.map((h,i) => [h, r[i]]))) });
+    return jsonResponse({ status: 'ok', data: rows.slice(1).reverse().slice(0,200).map(r => Object.fromEntries(hdrs.map((h,i) => [h, r[i]]))) });
   }
-  return json({ status: 'error', message: 'unknown action' });
+  return jsonResponse({ status: 'error', message: 'unknown action' });
 }
 
 function writeTransaction(ss, d) {
@@ -869,7 +893,7 @@ function updatePalletStock(ss, palletId, newQty) {
   sh.appendRow([palletId, newQty, new Date().toISOString()]);
 }
 
-function json(obj) {
+function jsonResponse(obj) {
   return ContentService
     .createTextOutput(JSON.stringify(obj))
     .setMimeType(ContentService.MimeType.JSON);
@@ -912,9 +936,8 @@ function showToast(msg, type) {
   t._tid = setTimeout(() => t.classList.remove('show'), 3400);
 }
 
-// ════════ QR AUTO-SELECT — v3: retry loop + iOS Safari safe ════════
+// ════════ QR AUTO-SELECT — v4: retry loop + iOS Safari safe ════════
 function handleQRAutoSelect() {
-  // รองรับทั้ง ?pallet=PAL-001 และ #pallet=PAL-001
   const searchParams = new URLSearchParams(window.location.search);
   const hashStr      = window.location.hash.replace(/^#/, '');
   const hashParams   = new URLSearchParams(hashStr);
@@ -922,12 +945,11 @@ function handleQRAutoSelect() {
 
   if (!qrPallet || !PALLET_IDS.includes(qrPallet)) return;
 
-  // แสดง toast ให้ user รู้ว่าระบบกำลังประมวลผล QR
   showToast('🔲 เปิดพาเลท ' + qrPallet + ' จาก QR…', 'info');
   showPage('scan');
 
-  const MAX_ATTEMPTS = 20;   // ลองสูงสุด 20 ครั้ง (= 2 วินาที)
-  const INTERVAL_MS  = 100;  // ทุก 100ms
+  const MAX_ATTEMPTS = 20;
+  const INTERVAL_MS  = 100;
   let   attempts     = 0;
 
   function trySelect() {
@@ -939,21 +961,18 @@ function handleQRAutoSelect() {
       const idx = PALLET_IDS.indexOf(qrPallet);
       if (idx !== -1 && buttons[idx]) {
         buttons[idx].click();
-        // scrollIntoView แบบ smooth อาจ fail บน iOS 14- ให้ fallback ด้วย
         try {
           buttons[idx].scrollIntoView({ behavior: 'smooth', block: 'center' });
         } catch(_) {
           buttons[idx].scrollIntoView(false);
         }
       }
-      return; // สำเร็จ — หยุด retry
+      return;
     }
 
-    // ยังไม่ render — retry ถ้ายังไม่ครบ MAX_ATTEMPTS
     if (attempts < MAX_ATTEMPTS) {
       setTimeout(trySelect, INTERVAL_MS);
     } else {
-      // Fallback สุดท้าย: บังคับ render แล้วเลือกอีกครั้ง
       renderPalletGrid();
       const btns = document.getElementById('pallet-grid').querySelectorAll('.pallet-btn');
       const idx  = PALLET_IDS.indexOf(qrPallet);
@@ -961,16 +980,34 @@ function handleQRAutoSelect() {
     }
   }
 
-  // เริ่ม retry loop (delay 80ms ก่อน เพื่อให้ showPage render DOM ก่อน)
   setTimeout(trySelect, 80);
 }
 
-// ════════ INIT ════════
-if (GAS_URL) updateSyncBadge('ok');
-// retry รายการที่ค้างไว้ตอน startup (non-blocking)
-if (GAS_URL) setTimeout(retryPendingSync, 1500);
-handleQRAutoSelect();
-renderDashboard();
+// ════════ INIT — v4: ดึงข้อมูลจาก Cloud ทันทีตอนเปิดหน้า ════════
+(async () => {
+  // แสดง badge และ render จาก localStorage ก่อน (เร็ว)
+  if (GAS_URL) updateSyncBadge('syncing');
+  handleQRAutoSelect();
+  renderDashboard();
+
+  // ✅ โหลด Cloud พร้อมกัน: stock (ทำให้ทุกเครื่องเห็นข้อมูลเดียวกัน)
+  //    + retry รายการค้าง
+  if (GAS_URL) {
+    const [cloudOk] = await Promise.all([
+      loadFromCloud(),
+      retryPendingSync()
+    ]);
+    if (cloudOk) {
+      renderDashboard();    // re-render ด้วยข้อมูลจาก Cloud
+      renderPalletGrid();   // อัปเดต scan page ด้วย
+      updateSyncBadge('ok');
+    } else {
+      updateSyncBadge('err');
+    }
+  }
+})();
 </script>
 </body>
 </html>
+HTMLEOF
+echo "Done: $(wc -l < /home/claude/warehouse_v4.html) lines"
