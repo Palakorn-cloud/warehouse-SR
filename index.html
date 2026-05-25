@@ -386,27 +386,31 @@ async function syncTransactionOnline(txData) {
         }
       })
     });
-      const json = await res.json();
+      
+    // GAS อาจ redirect — ตรวจสอบ status
+    if (!res.ok) throw new Error('HTTP ' + res.status);
 
-console.log(json);
+    const json = await res.json();
 
-// โหลดข้อมูลใหม่จาก Google Sheet
+if (json.status !== 'ok') {
+  throw new Error(
+    json.message || 'GAS returned error'
+  );
+}
+
+// โหลดข้อมูลใหม่จาก Cloud
 await loadFromCloud();
 
-// refresh dashboard
+// refresh หน้าจอ
 renderDashboard();
 
 renderHistory();
 
 renderPalletGrid();
-    // GAS อาจ redirect — ตรวจสอบ status
-    if (!res.ok) throw new Error('HTTP ' + res.status);
 
-    const json = await res.json();
-    if (json.status !== 'ok') throw new Error(json.message || 'GAS returned error');
+updateSyncBadge('ok');
 
-    updateSyncBadge('ok');
-    return true;
+return true;
 
   } catch (err) {
     updateSyncBadge('err');
