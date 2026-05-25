@@ -391,10 +391,26 @@ async function syncTransactionOnline(txData) {
     if (!res.ok) throw new Error('HTTP ' + res.status);
 
     const json = await res.json();
-    if (json.status !== 'ok') throw new Error(json.message || 'GAS returned error');
 
-    updateSyncBadge('ok');
-    return true;
+if (json.status !== 'ok') {
+  throw new Error(
+    json.message || 'GAS returned error'
+  );
+}
+
+// โหลดข้อมูลใหม่จาก Cloud
+await loadFromCloud();
+
+// refresh หน้าจอ
+renderDashboard();
+
+renderHistory();
+
+renderPalletGrid();
+
+updateSyncBadge('ok');
+
+return true;
 
   } catch (err) {
     updateSyncBadge('err');
