@@ -324,7 +324,11 @@ function saveGasUrl() {
   GAS_URL = val;
   localStorage.setItem(GAS_URL_KEY, val);
   updateSyncBadge(val ? 'ok' : 'local');
-  showToast(val ? '✅ บันทึก URL เรียบร้อย' : 'ล้าง URL แล้ว — ใช้ localStorage', val ? 'success' : 'info');
+  showToast(
+    val 
+    ? 'บันทึก URL เรียบร้อย' 
+    : 'ล้าง URL แล้ว — ใช้ localStorage', 
+    val ? 'success' : 'info');
 }
 
 async function testGasConnection() {
